@@ -1,0 +1,223 @@
+---
+title: "Practical Machine Learning Course Project1"
+author: "Stanley Kan Chuen LAM"
+date: "February 7, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1. Synposis
+
+This report describes the analysis of the machine learning models used to predict the manner in which participants did the exercise, identified by the "classe" variable in the training set. Data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants is used. Both supervised and unsupervised trainings models (basic ones) are studied.
+
+Background : Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+
+## 2. Load necessary libraries
+
+```{r Libraries, results = "hide", message=F, warning=F}
+library(caret)
+library(randomForest)
+library(parallel)
+library(doParallel)
+```
+
+## 3. Import Data
+
+```{r Importdata, cache=TRUE}
+pml.training <- read.csv("./pml-training.csv", na.strings=c("", "NA"))
+pml.testing <- read.csv("./pml-testing.csv", na.strings=c("", "NA"))
+
+dim(pml.training)
+str(pml.training)
+```
+
+## 4. Data Cleansing & Data Splitting
+
+Remove variables which are more than 97% null or NA.
+
+```{r Cleasing_split, cache=TRUE}
+NAvar <- names(which((colSums(is.na(pml.training))/nrow(pml.training))>0.97))
+
+pml.training <- pml.training[!(names(pml.training) %in% NAvar)]
+pml.testing  <- pml.testing[!(names(pml.testing) %in% NAvar)]
+```
+
+Remove indices, user_names, timestamps & windows related variables
+
+```{r trim_vars, cache=TRUE}
+pml.training <- pml.training[,-c(1:7)]
+pml.testing  <- pml.testing[,-c(1:7)]
+```
+
+Data Splitting
+
+```{r datasplit, cache=TRUE}
+set.seed(1724) # randomly selected seed
+inTrain  <- createDataPartition(pml.training$classe, p=0.75, list=FALSE)
+training <- pml.training[inTrain,]
+testing  <- pml.training[-inTrain,]
+```
+
+## 5. Enabling Parallel Processing
+
+According to the mentor's recommendation in the forum, let's enable Parallel Processing.
+
+```{r parallelprocess}
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+
+## 6. Modelling
+
+6.1 LDA
+
+```{r LDA, cache=TRUE}
+modelLDA   <- train(classe~., method="lda", data=training,
+                    trControl = trainControl(allowParallel = TRUE))
+ptrainLDA  <- predict(modelLDA, training)
+ptestLDA   <- predict(modelLDA, testing)
+cftrainLDA <- confusionMatrix(training$classe, ptrainLDA)
+cftestLDA  <- confusionMatrix(testing$classe, ptestLDA)
+cftrainLDA
+cftestLDA
+```
+
+6.2 GBM
+
+```{r GBM, cache=TRUE}
+modelGBM   <- train(classe~., method="gbm", data=training,
+                    trControl = trainControl(allowParallel = TRUE))
+ptrainGBM  <- predict(modelGBM, training)
+ptestGBM   <- predict(modelGBM, testing)
+cftrainGBM <- confusionMatrix(training$classe, ptrainGBM)
+cftestGBM  <- confusionMatrix(testing$classe, ptestGBM)
+cftrainGBM
+cftestGBM
+plot(modelGBM)
+```
+
+6.3 Random Forest ntree=5
+
+Note that, instead of using the caret::train(method="rf") function, the randomforest::randomforest function(few mins) is used since it runs by far faster than the caret::train(over an hour, even with parallel processing).
+
+```{r RF_ntree5, cache=TRUE}
+modelRF5   <- randomForest(classe~., data=training, ntree=5)
+ptrainRF5  <- predict(modelRF5, training)
+ptestRF5   <- predict(modelRF5, testing)
+cftrainRF5 <- confusionMatrix(training$classe, ptrainRF5)
+cftestRF5  <- confusionMatrix(testing$classe, ptestRF5)
+cftrainRF5
+cftestRF5
+plot(modelRF5)
+```
+
+6.4 Random Forest, ntree=50
+
+```{r RF_ntree50, cache=TRUE}
+modelRF50   <- randomForest(classe~., data=training, ntree=50)
+ptrainRF50  <- predict(modelRF50, training)
+ptestRF50   <- predict(modelRF50, testing)
+cftrainRF50 <- confusionMatrix(training$classe, ptrainRF50)
+cftestRF50  <- confusionMatrix(testing$classe, ptestRF50)
+cftrainRF50
+cftestRF50
+plot(modelRF50)
+varImpPlot(modelRF50)
+```
+
+Observation : It can be seen that beyond ntree=40, the change in Error become insignificant. Hence, select ntree=50.
+
+
+6.5 Random Forest, top 10 important variables, ntree=50
+
+```{r importance_top10, cache=TRUE}
+vImp <- varImp(modelRF50)
+trainingIMP10 <- training[order(vImp$Overall, decreasing = T)[1:10]]
+trainingIMP10 <- data.frame(trainingIMP10, classe=training$classe)
+modelRFIMP10   <- randomForest(classe~., data=trainingIMP10, ntree=50)
+ptrainRFIMP10  <- predict(modelRFIMP10, trainingIMP10)
+ptestRFIMP10   <- predict(modelRFIMP10, testing)
+cftrainRFIMP10 <- confusionMatrix(training$classe,
+                                  ptrainRFIMP10)
+cftestRFIMP10  <- confusionMatrix(testing$classe,
+                                  ptestRFIMP10)
+cftrainRFIMP10
+cftestRFIMP10
+plot(modelRFIMP10)
+```
+
+Close parallel processing
+
+```{r closeparallel}
+stopCluster(cluster)
+registerDoSEQ()
+```
+
+## 7. Summary of model accuracies & Conclusion
+
+```{r accuracies, cache=TRUE}
+v1 <- c(cftrainLDA$overall[1],
+        cftrainGBM$overall[1],
+        cftrainRF5$overall[1],
+        cftrainRF50$overall[1],
+        cftrainRFIMP10$overall[1])
+
+v2 <- c(cftestLDA$overall[1],
+        cftestGBM$overall[1],
+        cftestRF5$overall[1],
+        cftestRF50$overall[1],
+        cftestRFIMP10$overall[1])
+
+modeloutofsamplerror <- data.frame(Training = round(1-v1, 3),
+                       Testing = round(1-v2, 3))
+rownames(modeloutofsamplerror) <- c("LDA", "GBM", "RF5", "RF50", "RFIMP10")
+
+message("Out of Sample Errors")
+modeloutofsamplerror
+```
+
+Conclusion : It can be seen that Random Forest with ntree=50, RF50, has the lowest Out-of-Sample Error on the testing set. Let's use this model to do the 20 samples test set prediction for the quiz.
+
+## 8. Predictions on given 20 samples test set
+
+Let's summaries the prediction results of all models in a table
+
+```{r predict, cache=TRUE}
+predall <- data.frame(predict(modelLDA, pml.testing),
+                      predict(modelGBM, pml.testing),
+                      predict(modelRF5, pml.testing),
+                      predict(modelRF50, pml.testing),
+                      predict(modelRFIMP10, pml.testing))
+colnames(predall) <- c("LDA", "GBM", "RF5", "RF50", "RFIMP10")
+predall
+```
+
+## 9. Experiment on unsupervised training : Kmeans clustering
+
+Let's do an experiment using kmeans, with 5 centers, as 5 different "classe" is a known fact.
+
+```{r cluster, cache=TRUE}
+set.seed(8237) # randomly selected seed
+kMeans1 <- kmeans(subset(training,select=-c(classe)),centers=5)
+table(kMeans1$cluster,training$classe)
+
+kMeans1 <- kmeans(subset(training,select=-c(classe)),centers=5)
+table(kMeans1$cluster,training$classe)
+
+kMeans1 <- kmeans(subset(training,select=-c(classe)),centers=5)
+table(kMeans1$cluster,training$classe)
+```
+
+From the results tables of the 3 runs, we cannot tell which number(1-5) could match distinctively to individual classe(A-E). The classe matching results are not good and hence stop further investigation for the time being.
